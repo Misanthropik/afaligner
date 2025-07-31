@@ -1,19 +1,34 @@
 from setuptools import setup
 from cffi import FFI
+import io
 
-# Step 1: Declare the C API you need
+# 1. Instantiate FFI
 ffi = FFI()
-ffi.cdef(open("src/afaligner/c_modules/dtwbd.h").read())
 
-# Step 2: Tell CFFI how to compile it
+# 2. Read & clean the header file for cdef()
+header_path = "src/afaligner/c_modules/dtwbd.h"
+with io.open(header_path, encoding="utf8") as f:
+    raw = f.read()
+
+# Strip out preprocessor directives
+lines = []
+for line in raw.splitlines():
+    stripped = line.lstrip()
+    if not stripped.startswith("#"):
+        lines.append(line)
+cleaned_header = "\n".join(lines)
+
+# 3. Tell CFFI about the declarations
+ffi.cdef(cleaned_header)
+
+# 4. Configure compilation of the actual C module
 ffi.set_source(
-    "afaligner.c_modules._dtwbd",                # Python module path
-    ["src/afaligner/c_modules/dtwbd.c"],          # input C files
-    extra_compile_args=[],                        # e.g. ["-O3"]
-    # libraries=[],                               # e.g. ["m"]
+    "afaligner.c_modules._dtwbd",
+    ["src/afaligner/c_modules/dtwbd.c"],
+    # extra_compile_args, libraries, etc. as needed
 )
 
-# Step 3: Hook it into setuptools
+# 5. Hook into setuptools
 setup(
     name="afaligner",
     version="0.2.0",
