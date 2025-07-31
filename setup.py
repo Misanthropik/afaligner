@@ -1,34 +1,33 @@
+# setup.py
 from setuptools import setup
 from cffi import FFI
 import io
 
-# 1. Instantiate FFI
 ffi = FFI()
 
-# 2. Read & clean the header file for cdef()
-header_path = "src/afaligner/c_modules/dtwbd.h"
-with io.open(header_path, encoding="utf8") as f:
-    raw = f.read()
+# 1) Read & strip your header of ANY '#' lines (guards, includes, etc.)
+with io.open("src/afaligner/c_modules/dtwbd.h", encoding="utf8") as f:
+    lines = [
+        line for line in f.read().splitlines()
+        if not line.lstrip().startswith("#")
+    ]
+cleaned_cdefs = "\n".join(lines)
 
-# Strip out preprocessor directives
-lines = []
-for line in raw.splitlines():
-    stripped = line.lstrip()
-    if not stripped.startswith("#"):
-        lines.append(line)
-cleaned_header = "\n".join(lines)
+# 2) Tell CFFI about the *clean* declarations
+ffi.cdef(cleaned_cdefs)
 
-# 3. Tell CFFI about the declarations
-ffi.cdef(cleaned_header)
-
-# 4. Configure compilation of the actual C module
+# 3) Correctly call set_source:
+#    - First arg: module name
+#    - Second arg: PREAMBLE string, not a list
+#    - Then pass your C sources via the 'sources' kw
 ffi.set_source(
     "afaligner.c_modules._dtwbd",
-    ["src/afaligner/c_modules/dtwbd.c"],
-    # extra_compile_args, libraries, etc. as needed
+    '#include "dtwbd.h"\n',               # this is a *string* preamble
+    sources=["src/afaligner/c_modules/dtwbd.c"],
+    include_dirs=["src/afaligner/c_modules"],
 )
 
-# 5. Hook into setuptools
+# 4) Plug into setuptools as usual
 setup(
     name="afaligner",
     version="0.2.0",
