@@ -1,33 +1,29 @@
-# setup.py
 from setuptools import setup
 from cffi import FFI
 import io
 
-ffi = FFI()
+# 1) Build a single FFI builder and clean out all '#...' lines:
+ffibuilder = FFI()
+hdr = io.open("src/afaligner/c_modules/dtwbd.h", encoding="utf8").read()
+decls = "\n".join(
+    line for line in hdr.splitlines()
+    if not line.lstrip().startswith("#")
+)
+ffibuilder.cdef(decls)
 
-# 1) Read & strip your header of ANY '#' lines (guards, includes, etc.)
-with io.open("src/afaligner/c_modules/dtwbd.h", encoding="utf8") as f:
-    lines = [
-        line for line in f.read().splitlines()
-        if not line.lstrip().startswith("#")
-    ]
-cleaned_cdefs = "\n".join(lines)
-
-# 2) Tell CFFI about the *clean* declarations
-ffi.cdef(cleaned_cdefs)
-
-# 3) Correctly call set_source:
-#    - First arg: module name
-#    - Second arg: PREAMBLE string, not a list
-#    - Then pass your C sources via the 'sources' kw
-ffi.set_source(
-    "afaligner.c_modules._dtwbd",
-    '#include "dtwbd.h"\n',               # this is a *string* preamble
+# 2) Tell it how to compile the real C code:
+ffibuilder.set_source(
+    "afaligner.c_modules._dtwbd",   # import path of your native module
+    '#include "dtwbd.h"\n',         # string preamble only
     sources=["src/afaligner/c_modules/dtwbd.c"],
     include_dirs=["src/afaligner/c_modules"],
 )
 
-# 4) Plug into setuptools as usual
+# 3) Extract the Extension object and its build_ext handler:
+extension = ffibuilder.distutils_extension()
+cmdclass = {"build_ext": extension.build_ext}
+
+# 4) Standard setuptools.setup() with CFFI extension hooked in
 setup(
     name="afaligner",
     version="0.2.0",
@@ -35,7 +31,7 @@ setup(
     packages=["afaligner"],
     package_dir={"": "src"},
     install_requires=["cffi>=1.14"],
-    ext_modules=[ffi.distutils_extension()],
-    cmdclass={"build_ext": ffi.distutils_extension().build_ext},
+    ext_modules=[extension],
+    cmdclass=cmdclass,
     zip_safe=False,
 )
