@@ -1,54 +1,103 @@
-import ctypes
-import os.path
+# src/afaligner/c_dtwbd_wrapper.py
 
+from cffi import FFI
 import numpy as np
 
+# ----------------------------------------------------------------------------
+# 1) Define the C API
+# ----------------------------------------------------------------------------
+ffi = FFI()
+ffi.cdef("""
+    typedef struct {
+        double distance;
+        size_t prev_i;
+        size_t prev_j;
+    } D_matrix_element;
 
+    ssize_t FastDTWBD(
+        double *s,
+        double *t,
+        size_t n,
+        size_t m,
+        size_t l,
+        double skip_penalty,
+        int    radius,
+        double *path_distance,
+        size_t *path_buffer
+    );
+""")
+
+# ----------------------------------------------------------------------------
+# 2) Point at your C sources and header
+# ----------------------------------------------------------------------------
+ffi.set_source(
+    "afaligner.c_modules._dtwbd",       # this becomes the compiled extension
+    '#include "dtwbd.h"',                # your header in c_modules/
+    sources=["src/afaligner/c_modules/dtwbd.c"],
+    include_dirs=["src/afaligner/c_modules"],
+)
+
+# ----------------------------------------------------------------------------
+# 3) Python wrapper signature (same as before)
+# ----------------------------------------------------------------------------
 class FastDTWBDError(Exception):
-    pass
+    """Raised when the C FastDTWBD call returns an error code."""
 
 
-BASE_DIR = os.path.dirname(os.path.realpath(__file__))
-
-
-def c_FastDTWBD(s, t, skip_penalty, radius):
+def c_FastDTWBD(s: np.ndarray,
+                t: np.ndarray,
+                skip_penalty: float,
+                radius: int):
     """
-    Wrapper for FastDTWDB C implementation.
+    Run the FastDTWBD algorithm (via the C extension).
+    Returns (distance, path_buffer—as an (L,2) np.uintp array).
     """
-    c_module = ctypes.cdll[os.path.join(BASE_DIR, 'c_modules/dtwbd.so')]
-    c_module.FastDTWBD.argtypes = (
-        ctypes.POINTER(ctypes.c_double),
-        ctypes.POINTER(ctypes.c_double),
-        ctypes.c_size_t,
-        ctypes.c_size_t,
-        ctypes.c_size_t,
-        ctypes.c_double,
-        ctypes.c_int,
-        ctypes.POINTER(ctypes.c_double),
-        ctypes.POINTER(ctypes.c_size_t),
-    )
-    c_module.FastDTWBD.restype = ctypes.c_ssize_t
-    
-    n, l = s.shape
-    m, _ = t.shape
-    path_distance = ctypes.c_double()
-    path_buffer = np.empty((n+m, 2), dtype='uintp')
-    path_len = c_module.FastDTWBD(
-        s.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
-        t.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
-        ctypes.c_size_t(n),
-        ctypes.c_size_t(m),
-        ctypes.c_size_t(l),
-        ctypes.c_double(skip_penalty),
+    # Import the compiled extension
+    from afaligner.c_modules import _dtwbd
+    lib = _dtwbd.lib
+    _ffi = _dtwbd.ffi
+
+    # Ensure double-precision contiguous arrays
+    s_arr = np.ascontiguousarray(s, dtype=np.double)
+    t_arr = np.ascontiguousarray(t, dtype=np.double)
+
+    # Dimensions
+    n, l = s_arr.shape
+    m, _ = t_arr.shape
+
+    # Prepare output holders
+    path_distance = _ffi.new("double *")
+    buf_len = (n + m) * 2
+    path_buffer = _ffi.new(f"size_t[{buf_len}]")
+
+    # Call into C
+    ret = lib.FastDTWBD(
+        _ffi.cast("double *", _ffi.from_buffer(s_arr)),
+        _ffi.cast("double *", _ffi.from_buffer(t_arr)),
+        n, m, l,
+        skip_penalty,
         radius,
-        ctypes.byref(path_distance),
-        path_buffer.ctypes.data_as(ctypes.POINTER(ctypes.c_size_t))
+        path_distance,
+        path_buffer
     )
 
-    if path_len < 0:
+    if ret < 0:
         raise FastDTWBDError(
-            'The FastDTWDB() C function raised an error. '
-            'See stderr for more details.'
+            "FastDTWBD() returned error code %d" % ret
         )
 
-    return path_distance.value, path_buffer[:path_len]
+    # Slice out only the used entries and reshape to (ret, 2)
+    raw = np.frombuffer(
+        _ffi.buffer(path_buffer, buf_len * _ffi.sizeof("size_t")),
+        dtype=np.uintp
+    )
+    path = raw.reshape(-1, 2)[:ret]
+
+    return float(path_distance[0]), path
+
+
+# ----------------------------------------------------------------------------
+# 4) Allow ad-hoc compile if you ever run this file directly
+# ----------------------------------------------------------------------------
+if __name__ == "__main__":
+    ffi.compile(verbose=True)
