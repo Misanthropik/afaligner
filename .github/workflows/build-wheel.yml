@@ -1,0 +1,31 @@
+name: Build Windows Wheel
+
+on:
+  workflow_dispatch:  # Manual trigger
+  push:
+    branches: [main]
+
+jobs:
+  build-wheel:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.9'  # Change if you're using a different version
+
+    - name: Upgrade pip & wheel
+      run: python -m pip install --upgrade pip wheel setuptools build
+
+    - name: Build wheel
+      run: python -m build --wheel
+
+    - name: Upload wheel as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: afaligner-wheel
+        path: dist/*.whl
